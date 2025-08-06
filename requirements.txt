@@ -1,0 +1,6 @@
+Access to a cluster with SLURM
+
+Available modules:
+FastQC, STAR, samtools, deepTools
+
+⚠️ Make sure to modify the sample names and file paths inside rnaseq_pipeline.sh before running the script.
