@@ -58,7 +58,7 @@ samtools index ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam
 echo "................................................................ 2. END_ALIGNMENT ${describer} ................................................................"
 
 
-# ========== STEP 9: BAM TO BIGWIG =========
+# ========== STEP 3: BAM TO BIGWIG =========
 
 echo "................................................................ 9. START_BAMCOVERAGE ${describer} ................................................................"
 
@@ -69,4 +69,5 @@ bamCoverage --bam ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam \
         --normalizeUsing RPGC
 
 echo "................................................................ 9. END_BAMCOVERAGE ${describer} ................................................................"
+
 
