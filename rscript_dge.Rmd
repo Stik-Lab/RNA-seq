@@ -1,0 +1,316 @@
+
+# ============================================================
+# Differential Gene Expression Analysis with DESeq2
+# ============================================================
+
+#required libraries
+
+```{r}
+
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(writexl)
+library(enrichR)
+
+
+```
+
+# import gene counts table
+
+```{r, generate variables}
+
+sample_names    <- c("sample1", "sample2", "sample3", "sample4")
+conditions      <- c("control", "control", "treatment", "treatment")
+reference_level <- "control" 
+
+counts_file     <- "counts.tab"          # path to raw counts table
+annotation_file <- "genes.bed"           # path to gene annotation BED file
+output_dir      <- "outputs"             # output directory
+
+annotation_cols <- c("chr", "start", "strand", "end",
+                     "symbol", "ensembl_gene_id", "description")
+
+condition_colors <- c("control"   = "sandybrown",
+                      "treatment" = "olivedrab3")
+
+# create output directories
+
+dir.create(file.path(output_dir, "plots"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(output_dir, "files"), recursive = TRUE, showWarnings = FALSE)
+
+```
+
+```{r, import and annotate counts}
+
+# import gene counts
+gene_counts <- read.table(counts_file,
+                          sep       = "\t",
+                          col.names = sample_names,
+                          skip      = skip_lines)
+
+gene_counts$ensembl_gene_id <- rownames(gene_counts)
+gene_counts$ensembl_gene_id <- gsub("\\..*","", gene_counts$ensembl_gene_id)
+
+# annotate with gene symbol
+
+annotation <- read.table(annotation_file,
+                         sep       = "\t",
+                         header    = FALSE,
+                         col.names = annotation_cols)
+
+gene_counts <- merge(gene_counts, annotation, by = "ensembl_gene_id")
+
+# remove duplicates
+
+gene_counts_unique <- gene_counts %>%
+  group_by(symbol) %>%
+  slice_max(.data[[sample_names[1]]], with_ties = FALSE) %>%
+  ungroup()
+
+gene_counts_unique$symbol <- make.unique(gene_counts_unique$symbol)
+
+# Set the modified gene symbols as row names
+rownames(gene_counts_unique) <- gene_counts_unique$symbol
+
+# Convert to data frame, then set row names
+gene_counts_unique <- as.data.frame(gene_counts_unique)
+rownames(gene_counts_unique) <- gene_counts_unique$symbol
+
+
+```
+
+
+# BUILD DESEQ2 OBJECT
+
+```{r}
+
+sample_info <- data.frame(row.names = sample_names,
+                          condition = factor(conditions))
+
+dds <- DESeqDataSetFromMatrix(countData = count_cols,
+                              colData   = sample_info,
+                              design    = ~ condition)
+
+# Pre-filter low-count genes
+dds <- dds[rowSums(counts(dds)) > 5, ]
+
+# Set reference level
+dds$condition <- relevel(dds$condition, ref = reference_level)
+
+```
+
+# PCA
+
+```{r}
+
+dds_vst <- vst(dds)
+pca_data <- plotPCA(dds_vst, intgroup = "condition", returnData = TRUE)
+
+pca_plot <- ggplot(pca_data, aes(x = PC1, y = PC2,
+                                  fill  = condition,
+                                  label = name)) +
+  geom_point(shape = 21, color = "black", stroke = 1.3, size = 4) +
+  geom_text_repel(size = 4, max.overlaps = 20) +
+  labs(title = "PCA") +
+  xlab(pc1_variance) +
+  ylab(pc2_variance) +
+  scale_fill_manual(values = condition_colors) +
+  theme_bw() +
+  theme(panel.grid      = element_blank(),
+        axis.title      = element_text(size = 15),
+        plot.title      = element_text(size = 20, face = "bold", hjust = 0.5),
+        legend.title    = element_blank())
+
+pdf(file.path(output_dir, "plots", "PCA.pdf"), width = 8, height = 7)
+print(pca_plot)
+dev.off()
+
+```
+
+# differential expression results
+
+```{r, results}
+
+# calculate results
+dds <- DESeq(dds)
+results <- results(dds)
+
+# make dataframe
+df_results <- merge(as.data.frame(results),
+                     as.data.frame(counts(dds, normalized=TRUE)),
+                     by="row.names", sort=FALSE)
+df_results <-na.omit(df_results)
+
+# annotate dge status
+df_results <-mutate(df_results, 
+                    direction = ifelse(log2FoldChange>0, "up","down"), 
+                    stat_diff = ifelse(padj<0.01, "signf", "no_signf"),
+                    bio_diff = ifelse(abs(log2FoldChange)>1, "relevant","irrelevant"), 
+                    diff_group = paste(direction, stat_diff, bio_diff))
+
+df_results$diffexpressed <- "NO"
+df_results$diffexpressed[df_results$log2FoldChange > 1 & df_results$pvalue < 0.05] <- "UP" 
+df_result$diffexpressed[df_results$log2FoldChange < -1 & df_results$pvalue < 0.05] <- "DOWN"
+
+# show results
+summary(resultsdds)
+resultsdds
+
+# export results
+comparison_label <- paste0(
+  unique(conditions[conditions != reference_level]), "_vs_", reference_level
+)
+
+write_xlsx(df_results, file.path(output_dir, "files", paste0("DGE_", comparison_label, ".xlsx")))
+
+```
+
+# Volcano plot 
+
+```{r, create function}
+
+volcano_ptch <- function(df,
+                        gene_column = gene_column,
+                        colors = colors,
+                        number_genes = number_genes,
+                        title = title) {
+  gene_column <- as.character(gene_column)
+  df$log2FoldChange <- as.numeric(as.character(df$log2FoldChange))
+  df$pvalue <- as.numeric(as.character(df$pvalue))
+
+  # Remove rows with missing values
+  df <- df[!is.na(df$pvalue) & !is.na(df$log2FoldChange), ]
+
+  df$delabel <- NA
+
+  top_genes <- head(df[order(df$pvalue), gene_column], number_genes)
+  df$delabel <- ifelse(df[[gene_column]] %in% top_genes, df[[gene_column]], NA)
+
+  title <- title
+
+  ggplot(data=df, aes(x=log2FoldChange, y=-log10(pvalue), col=diffexpressed, label=delabel)) +
+    geom_point(alpha = 0.5) +
+    geom_text_repel(show.legend = FALSE) +
+    scale_color_manual(values = colors) +
+    labs(title = title, x = "Log2 Fold Change", y = "-Log10 P-value") +
+    geom_vline(xintercept=c(-1, 1), col="black", linetype = 'dashed') +
+    theme_classic() +
+    geom_hline(yintercept=-log10(0.05), col="black", linetype = 'dashed') +
+    ggtitle(title)
+}
+
+```
+
+```{r, plot results}
+
+pdf(file.path(output_dir, "plots", paste0("Volcano_", comparison_label, ".pdf")), width = 10, height = 8)
+volcano_ptch(df_results, "peak", c("blue", "grey", "red"), 5, "Volcano Plot of Differentially Accessible Peaks" ) + theme_classic()
+dev.off()
+
+
+```
+
+
+
+
+
+
+# GO analysis
+
+```{r, GO function}
+
+run_enrichr_go_BP <- function(genes) {
+  library(enrichR)
+  library(dplyr)
+  library(tidyr)
+  
+
+  dbs <- c(
+    #"GO_Molecular_Function_2025",
+    #                               "GO_Cellular_Component_2025",
+                                   "GO_Biological_Process_2025" #,
+    #                               "WikiPathway_2025_Human",
+    #                               "GWAS_Catalog_2025"
+    )
+  
+
+  enriched <- enrichr(as.vector(genes), dbs)
+  df <- enriched[[1]]
+  
+  colnames(df) <- gsub("GO_Biological_Process_2025\\.", "", colnames(df))
+
+  if ("Overlap" %in% colnames(df)) {
+    df <- df %>%
+      separate(col = "Overlap", into = c("Gene_count", "total"), sep = "/") %>%
+      mutate(Gene_count = as.numeric(Gene_count),
+             total = as.numeric(total),
+             gene_ratio = Gene_count / total)
+  }
+  
+  return(df)
+}
+
+plot_enrichr_df <- function(df, top_n = 20,
+                             plot_title = "Gene Ontology Enrichment") {
+  library(ggplot2)
+  
+  if (is.null(df) || nrow(df) == 0) {
+    warning("empty df")
+    return(NULL)
+  }
+
+  
+  ggplot(head(df, n = top_n), aes(x = Term, y = -log10(P.value))) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "azure4", size = 0.5) +
+    geom_point(aes(size = Gene_count, colour = gene_ratio), alpha = 0.7) +
+    scale_x_discrete(limits = rev(head(df$Term, n = top_n))) +
+    scale_color_gradient(low = "green", high = "red", limits = c(0, NA)) +
+    coord_flip() +
+    theme_bw() +
+    theme(
+      axis.ticks.length = unit(-0.1, "cm"),
+      axis.text.x = element_text(margin = margin(5, 5, 0, 5, "pt"), size = 14),
+      axis.text.y = element_text(margin = margin(5, 5, 5, 5, "pt"), size = 12),
+      axis.text = element_text(color = "black"),
+      panel.grid.minor = element_blank(),
+      legend.title.align = 0.5,
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+      axis.title.x = element_text(size = 12, face = "bold"),
+      axis.title.y = element_text(size = 12, face = "bold")
+    ) +
+    xlab("GO Terms") +
+    ylab("-log10(P.value)") +
+    labs(color = "Gene Ratio", size = "Number\nof genes") +
+    ggtitle(plot_title)
+
+}
+
+
+```
+
+```{r, generate GO results}
+
+library(enrichR)
+
+# select DGE genes
+dge_up <- subset(df_results_EP1vsAro, diffexpressed == "UP")
+dge_down <- subset(df_results_EP1vsAro, diffexpressed == "DOWN")
+
+#create df
+GOup_df <- createdfforGO_ptch(as.vector(dge_up$Row.names))
+GOdown_df <- createdfforGO_ptch(as.vector(dge_down$Row.names))
+
+# export enrichment results
+write_xlsx(GO_up_df,
+           file.path(output_dir, "files", paste0("GO_UP_", comparison_label, ".xlsx")))
+write_xlsx(GO_down_df,
+           file.path(output_dir, "files", paste0("GO_DOWN_", comparison_label, ".xlsx")))
+
+pdf(file.path(output_dir, "plots", paste0("GO_", comparison_label, ".pdf")), width = 13, height = 10)
+createPLOTGO_ptch(GOup_df, paste0("GO_BP: ", comparison_label, " UP"))
+createPLOTGO_ptch(GOdown_df, paste0("GO_BP: ", comparison_label, " DOWN"))
+dev.off()
+                                                   
+```
