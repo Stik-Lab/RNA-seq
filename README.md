@@ -3,18 +3,19 @@
 This repository contains a complete RNA-seq analysis pipeline designed for SLURM environments.
 
 ## Contents
-- Pre-processing
-- Differential Gene Expresion Analysis
+- Pre-processing  (`RNAseq_PIPELINE.sh`)
+- Differential Gene Expresion Analysis (`DGE_analysis.Rmd`)
 
 ## Pre-procesing Step-by-Step Description
 
 ### How to Run
 
-1. Modify the variables inside `pipeline.sh` with your paths and sample names.
+1. Modify the variables inside `RNAseq_PIPELINE.sh` with your paths and sample names.
 2. Submit to SLURM:
-   ```bash
-   sbatch RNAseq_PIPELINE.sh
-   ```
+
+```bash
+sbatch RNAseq_PIPELINE.sh
+```
 
 ### 1. Quality Control (FastQC)
 Runs a quality control check on the raw FASTQ files.
@@ -98,3 +99,42 @@ Arguments:
 - --normalizeUsing: Normalization method (e.g. RPGC = Reads Per Genomic Content)
 
 ## Differential Gene Expresion Analysis
+
+This workflow includes gene annotation, count filtering, normalization, statistical testing, visualization, and functional enrichment analysis.
+
+### How to Run
+
+1. Open `DGE_analysis.Rmd` in RStudio.
+2. Set the variables in the **CONFIG** section at the top.
+3. Knit or run chunk by chunk.
+
+### Input Files
+
+| File | Description |
+|---|---|
+| `counts.tab` | Raw gene counts matrix (from STAR `--quantMode GeneCounts`) |
+| `genes.bed` | Gene annotation BED file with Ensembl IDs and gene symbols |
+
+### Pipeline Overview
+
+**1. Import & Annotate**
+Reads the count matrix, merges with a gene annotation file to add gene symbols, and deduplicates entries where multiple Ensembl IDs map to the same symbol.
+
+**2. Differential Expression (DESeq2)**
+Builds a DESeq2 object, filters lowly expressed genes, and runs the model with a user-defined reference condition. Genes are classified as `UP`, `DOWN`, or `NO` based on `|LFC| > 1` and `padj < 0.05`.
+
+**3. Visualization**
+- **PCA** — assesses sample clustering and replicate reproducibility after VST normalization
+- **Volcano plot** — displays fold change vs. significance, labelling the top N most significant genes
+
+**4. GO Enrichment (enrichR)**
+Runs Gene Ontology Biological Process enrichment separately on UP and DOWN regulated genes.
+
+### Output Files
+
+- Differential expression results (`DGE_*.xlsx`)
+- Normalized gene expression values (`normalized_counts_*.xlsx`)
+- PCA plot (`PCA.pdf`)
+- Volcano plot (`Volcano_*.pdf`)
+- GO enrichment tables (`GO_UP_*.xlsx`, `GO_DOWN_*.xlsx`)
+- GO enrichment plots (`GO_*.pdf`)
