@@ -18,6 +18,9 @@ genomeIndex='path_to_STARindexgenome'
 GTFfile='path_to_annotation_file'
 effective_genome_size=2913022398
 
+BAM=${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam
+BW=${path_bw}/${describer}.bw
+
 for dir in "${path_bam}" "${path_bw}" ; do
   if [ ! -d "${dir}" ]; then
     mkdir -p "${dir}"
@@ -34,8 +37,12 @@ module load deepTools/3.5.1-foss-2021b
 # ========== STEP 1: FASTQC ==========
 
 echo "................................................................ 1. START_FASTQC ${describer} ................................................................"
-
-fastqc ${path_fq}/${describer}*.f*q.gz -o ${path_fq}
+FQC_DONE=$(ls ${path_fq}/${describer}*_fastqc.zip 2>/dev/null | head -n 1)
+if [ -n "${FQC_DONE}" ]; then
+    echo "SKIP FastQC: reports already exist for ${describer}"
+else
+  fastqc ${path_fq}/${describer}*.f*q.gz -o ${path_fq}
+fi
 
 echo "................................................................ 1. END_FASTQC ${describer} ................................................................"
 
@@ -43,17 +50,21 @@ echo "................................................................ 1. END_FA
 
 echo "................................................................ 3. START_ALIGNMENT ${describer} ................................................................"
 
-STAR --genomeDir ${genomeIndex} \
-    --sjdbGTFfile ${GTFfile} \
-    --readFilesCommand zcat  \
-    --readFilesIn ${path_fq}/${describer}_*1.f*q.gz ${path_fq}/${describer}_*2.f*q.gz \
-    --runThreadN 4 \
-    --outFileNamePrefix ${path_bam}/STAR_${describer} \
-    --outSAMtype BAM SortedByCoordinate --outTmpDir tmp_${describer} \
-    --outWigStrand Unstranded \
-    --quantMode GeneCounts
+if [ -s "${BAM}" ] && [ -s "${BAM}.bai" ]; then
+    echo "SKIP STAR: BAM already exists for ${describer}"
+else
+  STAR --genomeDir ${genomeIndex} \
+      --sjdbGTFfile ${GTFfile} \
+      --readFilesCommand zcat  \
+      --readFilesIn ${path_fq}/${describer}_*1.f*q.gz ${path_fq}/${describer}_*2.f*q.gz \
+      --runThreadN 4 \
+      --outFileNamePrefix ${path_bam}/STAR_${describer} \
+      --outSAMtype BAM SortedByCoordinate --outTmpDir tmp_${describer} \
+      --outWigStrand Unstranded \
+      --quantMode GeneCounts
 
-samtools index ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam
+  samtools index ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam
+fi
 
 echo "................................................................ 2. END_ALIGNMENT ${describer} ................................................................"
 
@@ -62,11 +73,16 @@ echo "................................................................ 2. END_AL
 
 echo "................................................................ 9. START_BAMCOVERAGE ${describer} ................................................................"
 
-bamCoverage --bam ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam \
+if [ -s "${BW}" ]; then
+    echo "SKIP bamCoverage: bigwig already exists for ${describer}"
+else
+
+  bamCoverage --bam ${path_bam}/STAR_${describer}Aligned.sortedByCoord.out.bam \
         --outFileName ${path_bw}/${describer}.bw \
         --effectiveGenomeSize 2913022398 \
         --outFileFormat bigwig --binSize 1 \
         --normalizeUsing RPGC
+fi
 
 echo "................................................................ 9. END_BAMCOVERAGE ${describer} ................................................................"
 
